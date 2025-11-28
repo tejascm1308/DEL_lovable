@@ -38,6 +38,23 @@ export interface SlotResponse {
   time_zone: string;
 }
 
+export interface ScheduleWithN8nRequest {
+  lead_email: string;
+  participant_emails: string[];
+  date_start: string;
+  date_end: string;
+  duration_minutes: number;
+  subject: string;
+  description?: string;
+}
+
+export interface ScheduleWithN8nResponse {
+  slot_start: string;
+  slot_end: string;
+  time_zone: string;
+  n8n_status: string;
+}
+
 export interface MeetingLog {
   google_event_id: string;
   lead_email: string;
@@ -145,6 +162,18 @@ export async function findSlot(data: SlotRequest): Promise<SlotResponse> {
     body: JSON.stringify(data),
   });
   return handleResponse<SlotResponse>(response);
+}
+
+// Schedule with n8n endpoint
+export async function scheduleWithN8n(data: ScheduleWithN8nRequest): Promise<ScheduleWithN8nResponse> {
+  const response = await fetch(`${API_BASE}/schedule/with-n8n`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ScheduleWithN8nResponse>(response);
 }
 
 // Meeting endpoints
