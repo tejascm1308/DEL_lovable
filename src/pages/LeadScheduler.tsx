@@ -1,12 +1,11 @@
 import { useState } from "react";
-import { format, parse, isValid } from "date-fns";
+import { format, parse, isValid, isBefore, isEqual } from "date-fns";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LeadHeader } from "@/components/LeadHeader";
@@ -16,21 +15,14 @@ import { NavHeader } from "@/components/NavHeader";
 import {
   User,
   TeamMember,
-  SlotResponse,
+  ScheduleWithN8nResponse,
   getUserByUsername,
   getTeamMembers,
-  findSlot,
+  scheduleWithN8n,
   logMeeting,
 } from "@/lib/api";
 import { CalendarIcon, Loader2, UserCircle, Clock, FileText, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const DURATION_OPTIONS = [
-  { value: "15", label: "15 minutes" },
-  { value: "30", label: "30 minutes" },
-  { value: "45", label: "45 minutes" },
-  { value: "60", label: "60 minutes" },
-];
 
 export default function LeadScheduler() {
   // Lead identification
@@ -45,14 +37,15 @@ export default function LeadScheduler() {
   // Meeting details
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
-  const [date, setDate] = useState<Date | undefined>();
+  const [startDate, setStartDate] = useState<Date | undefined>();
+  const [endDate, setEndDate] = useState<Date | undefined>();
   const [timeFrom, setTimeFrom] = useState("09:00");
   const [timeTo, setTimeTo] = useState("18:00");
   const [duration, setDuration] = useState("45");
 
   // Scheduling state
   const [scheduling, setScheduling] = useState(false);
-  const [scheduledSlot, setScheduledSlot] = useState<SlotResponse | null>(null);
+  const [scheduledSlot, setScheduledSlot] = useState<ScheduleWithN8nResponse | null>(null);
 
   const handleLoadTeam = async () => {
     if (!leadUsername.trim()) {
@@ -107,8 +100,25 @@ export default function LeadScheduler() {
       toast.error("Please enter a meeting subject");
       return;
     }
-    if (!date) {
-      toast.error("Please select a date");
+    if (!startDate) {
+      toast.error("Please select a start date");
+      return;
+    }
+    if (!endDate) {
+      toast.error("Please select an end date");
+      return;
+    }
+
+    // Validate date range
+    if (isBefore(endDate, startDate)) {
+      toast.error("End date must be on or after start date");
+      return;
+    }
+
+    // Validate duration
+    const durationMinutes = parseInt(duration, 10);
+    if (isNaN(durationMinutes) || durationMinutes <= 0) {
+      toast.error("Please enter a valid duration (positive number)");
       return;
     }
 
@@ -135,18 +145,21 @@ export default function LeadScheduler() {
       );
       const participantEmails = selectedMembers.map((m) => m.email);
 
-      // Build ISO datetime strings
-      const dateStr = format(date, "yyyy-MM-dd");
-      const dateStart = `${dateStr}T${timeFrom}:00`;
-      const dateEnd = `${dateStr}T${timeTo}:00`;
+      // Build ISO datetime strings for date range
+      const startDateStr = format(startDate, "yyyy-MM-dd");
+      const endDateStr = format(endDate, "yyyy-MM-dd");
+      const dateStart = `${startDateStr}T${timeFrom}:00`;
+      const dateEnd = `${endDateStr}T${timeTo}:00`;
 
-      // Find available slot
-      const slot = await findSlot({
+      // Call the new /schedule/with-n8n endpoint
+      const slot = await scheduleWithN8n({
         lead_email: lead.email,
         participant_emails: participantEmails,
         date_start: dateStart,
         date_end: dateEnd,
-        duration_minutes: parseInt(duration),
+        duration_minutes: durationMinutes,
+        subject: subject.trim(),
+        description: description.trim() || undefined,
       });
 
       // Log the meeting
@@ -273,28 +286,35 @@ export default function LeadScheduler() {
                   />
                 </div>
 
+                {/* Date Range Selection */}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>Date *</Label>
+                    <Label>Start Date *</Label>
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
                           className={cn(
                             "w-full justify-start text-left font-normal",
-                            !date && "text-muted-foreground"
+                            !startDate && "text-muted-foreground"
                           )}
                         >
                           <CalendarIcon className="mr-2 h-4 w-4" />
-                          {date ? format(date, "PPP") : "Pick a date"}
+                          {startDate ? format(startDate, "PPP") : "Pick start date"}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0" align="start">
                         <Calendar
                           mode="single"
-                          selected={date}
-                          onSelect={setDate}
-                          disabled={(d) => d < new Date()}
+                          selected={startDate}
+                          onSelect={(date) => {
+                            setStartDate(date);
+                            // If end date is before new start date, reset it
+                            if (date && endDate && isBefore(endDate, date)) {
+                              setEndDate(date);
+                            }
+                          }}
+                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
                           initialFocus
                           className="pointer-events-auto"
                         />
@@ -303,26 +323,61 @@ export default function LeadScheduler() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Duration</Label>
-                    <Select value={duration} onValueChange={setDuration}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {DURATION_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>End Date *</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left font-normal",
+                            !endDate && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {endDate ? format(endDate, "PPP") : "Pick end date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={endDate}
+                          onSelect={setEndDate}
+                          disabled={(d) => {
+                            const today = new Date(new Date().setHours(0, 0, 0, 0));
+                            if (d < today) return true;
+                            if (startDate && d < startDate) return true;
+                            return false;
+                          }}
+                          initialFocus
+                          className="pointer-events-auto"
+                        />
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </div>
 
+                {/* Duration - Free text input */}
+                <div className="space-y-2">
+                  <Label htmlFor="duration">Duration (minutes) *</Label>
+                  <Input
+                    id="duration"
+                    type="number"
+                    min="1"
+                    placeholder="e.g., 30"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Typical: 15, 30, 45, 60
+                  </p>
+                </div>
+
+                {/* Time Window */}
                 <div className="space-y-2">
                   <Label className="flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5" />
-                    Time Window (IST)
+                    Daily Time Window (IST)
                   </Label>
                   <div className="flex items-center gap-2">
                     <Input
@@ -343,7 +398,7 @@ export default function LeadScheduler() {
 
                 <Button
                   onClick={handleScheduleMeeting}
-                  disabled={scheduling || !subject.trim() || !date}
+                  disabled={scheduling || !subject.trim() || !startDate || !endDate}
                   className="w-full"
                   variant="wine"
                   size="lg"
