@@ -74,7 +74,7 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Playwrite NZ Guides", "system-ui", "sans-serif"],
+        sans: ["Bad Script", "system-ui", "sans-serif"],
       },
       keyframes: {
         "accordion-down": {
